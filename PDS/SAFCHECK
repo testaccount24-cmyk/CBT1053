@@ -1,0 +1,15 @@
+/* Rexx : Check a right */
+   Address TSO
+   Parse Arg Classe Rsrc Acces User .
+   If Rsrc = "" then do;
+      Say "** Class Resource Access User :"
+      Parse pull Classe Rsrc Acces User .
+   End;
+   'SAFCHECK'  Classe Rsrc Acces User
+   Select
+      When Rc =  0 then say "Resource allowed"
+      When Rc =  4 then say "Resource unknown - Rc =" Rc
+      When Rc = 12 then say "Parameter error - Rc =" Rc
+      Otherwise say "Resource forbidden - Rc =" Rc
+   End
+Return Rc

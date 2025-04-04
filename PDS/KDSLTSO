@@ -1,0 +1,4 @@
+/* Rexx : Calling KdsList */
+   Address TSO
+   "EXEC 'SCSF.ICSF.EXEC(KDSLIST)' '"translate(arg(1)," ","'")"'"
+Return Rc

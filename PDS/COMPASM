@@ -1,0 +1,27 @@
+//COMPASMC JOB (ACCNT$),'Compil Asm SAFCHECK',MSGCLASS=H,CLASS=A,
+//             NOTIFY=&SYSUID.,MSGLEVEL=(1,1),REGION=8M
+//*
+//*------------------------------*
+//* Compile an assembler program *
+//*------------------------------*
+//*
+//          EXPORT SYMLIST=*
+//*
+//          SET PGMSRC=SAFCHK33
+//          SET PGMMOD=SAFCHECK
+//          SET SRC='PAPTMP.USER.SRCEPGM'
+//          SET LOD='PAPTMP.USER.LOADLIB'
+//*
+//COMPASM   EXEC ASMACL,PARM.L='MAP,LET,LIST,AC(1),RENT,REFR'
+//C.SYSLIB  DD
+//          DD  DISP=SHR,DSN=SYS1.MODGEN
+//C.SYSIN   DD  DISP=SHR,DSN=&SRC.(&PGMSRC.)
+//L.SYSLMOD DD  DISP=SHR,DSN=&LOD.
+//L.SYSLIB  DD  DISP=SHR,DSN=&LOD.
+//          DD  DISP=SHR,DSN=SYS1.CSSLIB      * Callable Services *
+//          DD  DISP=SHR,DSN=CSF.SCSFMOD0     * ICSF *
+//L.SYSIN   DD  *,SYMBOLS=EXECSYS
+   ENTRY &PGMMOD.
+   NAME  &PGMMOD.(R)
+/*
+//

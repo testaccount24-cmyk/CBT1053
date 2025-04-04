@@ -1,0 +1,636 @@
+         TITLE '* MEMZAP: Zap a memory area *'
+*--------------------------------------------------------------------
+* Title : MEMZAP with a SYSIN containing the orders
+*--------------------------------------------------------------------
+*                       --> MEMZAP <--
+*
+* Function:  Allows you to display and modify a memory area
+*
+* Register : R1 = Parm address of the EXEC card or
+*            SYSIN with one command per line
+*
+*    - Commands  -
+*        DMP 01234568 => Displays 16 bytes in hex
+*        VER 01234568 4FE02A58 => Validate the value at this address
+*        REP 01234568 4FE02A58 01020304 => Replace the value if OK
+*
+*     Returns: R15 = Return code 0 = OK    4 = Anomaly
+*                                          8 = Errors
+*                                         12 = Parm errors
+*
+*  Registers : R4    = Work
+*              R8    = Return code backup
+*              R10   = Return subfunctions
+*              R11   = Address the work area
+*              R12   = Base register
+*
+MEMZAP   CSECT
+MEMZAP   Amode 31
+MEMZAP   Rmode 24
+*
+         Using MEMZAP,R12
+         Using WORKAREA,R11       Base Work Area
+*
+         STM   R14,R12,12(R13)    Backup Calling Pgm Registers
+         LR    R12,R15            Program addressability
+         LR    R10,R1             R10 = Parameter List Address
+         B     GETAREA
+*
+EYECATCH DC    CL16'MEMZAP v1.5'
+         DC    CL16'&SYSDATE &SYSTIME'
+*
+* - Creation of the workspace -
+*
+GETAREA  Equ   *
+         L     R0,AREASIZE        R0 = Dynamic area size
+         GETMAIN RU,LV=(0)        Obtain necessarey memory
+         LR    R11,R1             R11 = Save address of Work Area
+         ST    R13,SAVEAREA+4     Downstream chaining of SAs
+         ST    R11,8(R13)         Upstream chaining of SAs
+         LR    R13,R11            R13 = Address of Save Area
+         LR    R1,R10             Restore R1 to Parameter List Address
+*
+         Eject
+*
+SUITE    Equ   *
+         BAL   R10,INIT           Initialize Work Area
+         LTR   R15,R15            Test if INIT was OK
+         BNZ   THEEND
+         MODESET KEY=ZERO,MODE=SUP
+BCLTRT   Equ   *
+         BAL   R10,GETCMD         Get the next command
+         LTR   R15,R15            Test if we have finished
+         BNZ   FINPGM
+         BAL   R10,TRTCMD         Order execution command
+         LTR   R15,R15            Test if we have a STOP command
+         BZ    BCLTRT
+FINPGM   Equ   *
+         MODESET KEY=NZERO,MODE=PROB
+         TM    TMPARM,X'01'       Test if CMD came from the console
+         BO    THEEND
+         CLOSE (SYSIN)
+         CLOSE (SYSPRINT)
+*
+* - Free WorkArea and Return -
+*
+THEEND   Equ   *
+         MODESET KEY=NZERO,MODE=PROB
+         L     R8,RETCODE         Save Return Code
+         L     R13,SAVEAREA+4     Restore R13
+         L     R0,AREASIZE        R0 = Dynamic area size
+         LR    R1,R11             R1 = Dynamic area address
+         FREEMAIN RU,LV=(0),A=(1)
+         LR    R15,R8             Set Return Code in R15
+         L     R14,12(R13)        Restore registers
+         LM    R0,R12,20(R13)                       and return
+         BR    R14
+         Eject
+*
+*--------------------------------------------------------------
+*               - - - Level 1 routines - - -
+*--------------------------------------------------------------
+*                       --> Init <--
+*
+* Function : Initializing the Workarea, opening files
+*            and recovery of Parm from the EXEC card
+*
+* Registers : R4-R5 = Work
+*             R10 = Return address from BAL
+*
+INIT     EQU   *
+         STM   R4,R10,SAVE1
+*        - Initialization -
+         XC    RETCODE(4),RETCODE      Clear the return code
+         XC    TMPARM(1),TMPARM        Indicates file usage
+         LA    R4,80
+         STH   R4,WTOMSG               Save WTO message length
+         XC    WTOMSG+2(2),WTOMSG+2    Raz cpt for WTO
+         BAL   R10,GETPARM             Parm recovery of the EXEC card
+         TM    TMPARM,X'01'            Test if Parm provided
+         BO    FININIT                 Br.. Parm supplied
+*
+*        - Opening files -
+         OPEN  (SYSPRINT,OUTPUT)
+         LTR   R15,R15
+         BNZ   FININIT
+         OPEN  (SYSIN,INPUT)
+         LTR   R15,R15
+         BNZ   FININIT
+         LA    R15,1
+         BAL   R10,MESSAGE             Edit the title
+         XR    R15,R15
+*
+FININIT  Equ   *
+         LM    R4,R10,SAVE1
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*                       --> GetCmd <--
+*
+* Function : Recovery of the next command
+*
+* Registers : R4-R5 = Work
+*             R10 = Return address
+*             R15 = 0 if command found, 1 if end of processing
+*
+GETCMD   Equ   *
+         STM   R4,R10,SAVE1
+         TM    TMPARM,X'01'       Test if CMD via console
+         BO    CMDCONS            Br.. Interactive Cmd
+         GET   SYSIN,BUFFIN       Read the command in SYSIN
+         XR    R15,R15
+         B     FINCMD
+*
+CMDCONS  Equ   *
+         CLI   TMPARM,X'01'       Test if Parm already in place
+         BE    ASKCMD
+         MVI   TMPARM,X'01'   Remove cmd indication already provided
+         B     FINCMD
+*
+ASKCMD   Equ   *
+         MVC   WTOECB(4),K0
+         WTOR  MF=(E,WTORMODL),TEXT=(WTORMSG,BUFFIN,80,WTOECB)
+         WAIT  ECB=WTOECB
+         TR    INCMD(4),TABMAJUS    Translate cmd into uppercase
+         CLC   INCMD(4),=CL4'STOP'      Test if STOP command
+         BE    FININ
+         XR    R15,R15
+FINCMD   Equ   *
+         LM    R4,R10,SAVE1
+         BR    R10
+*
+FININ    Equ   *
+         LA    R15,1              Indicates end of manipulations
+         B     FINCMD
+         Eject
+*--------------------------------------------------------------
+*                       --> TrtCmd <--
+*
+* Function  : Validation and processing of commands
+*
+* Registers : R4-R5 = Work
+*             R10 = Return address
+*
+TRTCMD   EQU   *
+         STM   R4,R10,SAVE1
+         MODESET KEY=ZERO,MODE=SUP
+* - Edit the input line -
+         LA    R15,4                   Line of blanks
+         BAL   R10,MESSAGE
+         MVI   BUFFMSG,C' '            Clear the output buffer
+         MVC   BUFFMSG+1(132),BUFFMSG
+         MVC   BUFFMSG+1(6),=CL6'Cmd :'
+         MVC   BUFFMSG+7(80),BUFFIN
+         XR    R15,R15
+         BAL   R10,MESSAGE
+         TR    INCMD(4),TABMAJUS       Translate cmd into uppercase
+* - Find the command -
+         CLC   INCMD(4),=CL4'DMP '     Test if DMP command
+         BNE   TSTVER
+         BAL   R10,TRTDMP              Process the DMP command
+         B     FINTRT
+TSTVER   Equ   *
+         CLC   INCMD(4),=CL4'VER '     Test if VER command
+         BNE   TSTREP
+         BAL   R10,TRTVEREP            Process the VER command
+         B     FINTRT
+TSTREP   Equ   *
+         CLC   INCMD(4),=CL4'REP '     Test if REP commandP
+         BNE   TSTOP
+         BAL   R10,TRTVEREP            Process the REP command
+         B     FINTRT
+TSTOP    Equ   *
+         CLC   INCMD(4),=CL4'STOP'     Test if STOP commandP
+         BNE   ERRCMD
+         LA    R15,1                   End of processing
+         ST    R15,SAVER15             Preserve R15
+         B     FINTRT
+*
+* - Error. Command unknown
+ERRCMD   Equ   *
+         LA    R15,3                   RC = Command Unknown
+         BAL   R10,MESSAGE
+*
+FINTRT   Equ   *
+         L     R15,SAVER15             Reload R15
+         LM    R4,R10,SAVE1
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*               - - - Level 2 Routines - - -
+*--------------------------------------------------------------
+*                       --> GetParm <--
+*
+* Function : Recovery of Parameters
+*
+*          Recoit : R1 = Parm address of the EXEC card
+*
+* Registers : R2  = Length to be treated in the parm
+*             R4  = work
+*             R5  = Address parameter in the parmm
+*             R10 = Return address
+*             R15 = Return code
+*
+GETPARM  Equ   *
+         STM   R4,R10,SAVE2
+         L     R1,0(,R1)          R1 = Addr. Exec card parm
+         LH    R2,0(,R1)          R2 = Length of Parm
+         LTR   R2,R2              Is there a Parm?
+         BZ    FINPARM            No.. Parm not provided
+         LA    R4,2(,R1)          R4 = Start of Parm
+         CH    R2,K80             Test if Parm > 80 characters
+         BNH   *+8
+         LA    R2,80              Parm limit to 80 Char.
+         BCTR  R2,R0
+         EX    R2,MVCPARM         Copy Parm to BUFFIN
+         MVI   TMPARM,X'F1'       Indicates Parm provided in BUFFIN
+FINPARM  Equ   *
+         LM    R4,R10,SAVE2
+         BR    R10
+*
+MVCPARM  MVC   BUFFIN(0),0(R4)
+*
+         Eject
+*--------------------------------------------------------------
+*                       --> TrtDmp <--
+*
+* Function : DUMP A Memory Area
+*
+* Registers : R4-R5 = Work
+*             R10   = Return address
+*             R15   = Return code (label RETCODE)
+*
+TRTDMP   EQU   *
+         STM   R4,R10,SAVE2
+*
+         MODESET KEY=ZERO,MODE=SUP
+* - Retrieving the address to display -
+         MVC   WORKZONE(8),INDATA
+         BAL   R10,CONVBIN             Convert the address to binary
+         LTR   R15,R15
+         BNZ   ERTYPCAR                Br.. if character type error.
+*
+* - 16 Character Display -
+         LA    R6,4                    R6 = 4 words to display
+         MVI   BUFFMSG,C' '            Clear the output buffer
+         MVC   BUFFMSG+1(132),BUFFMSG
+         MVC   BUFFMSG+1(8),INDATA     Store address in Hex
+         MVI   BUFFMSG+9,C':'          Move in separator char
+         LA    R4,BUFFMSG+9            R4 = Output field address
+BCLDMP   Equ   *
+         ICM   R1,15,0(R2)             R1 = Value next 4 bytes
+         BAL   R10,CONVHEXA            Conversion to Hex
+* - Edit the desired area -
+         MVC   1(8,R4),WORKZONE        Move word in Hex
+         LA    R4,9(,R4)               > Next field
+         LA    R2,4(,R2)               > Address of the next 4 bytes
+         BCT   R6,BCLDMP
+         XR    R15,R15
+         BAL   R10,MESSAGE             Write the BUFFMSG
+         B     FINDMP
+*
+* - Error. Characters are not Hex -
+ERTYPCAR Equ   *
+         LA    R15,2                   RC = Characters are not Hex
+         BAL   R10,MESSAGE
+*
+FINDMP   Equ   *
+         MODESET KEY=NZERO,MODE=PROB
+         LM    R4,R10,SAVE2
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*                       --> TrtVeRep <--
+*
+* Function : Check and Replace a memory area
+*
+* Registers : R4-R5 = Work
+*             R1    = Work (for convhex)
+*             R2    = Work address of verified area
+*             R6    = Zone address to modify
+*             R10   = Return address
+*             R15   = Return code (same as RETCODE)
+*
+TRTVEREP EQU   *
+         STM   R4,R10,SAVE2
+         MODESET KEY=ZERO,MODE=SUP
+*
+* - Retrieving the address to validate -
+         MVC   WORKZONE(8),INDATA
+         BAL   R10,CONVBIN             Address to convert to binary
+         LTR   R15,R15
+         BNZ   ERCARVER                Br.. if character type error.
+         LR    R6,R2                   R6 = zone address to modify
+* - Address display to be validated before modification -
+         MVI   BUFFMSG,C' '            Clear the output buffer
+         MVC   BUFFMSG+1(132),BUFFMSG
+         MVC   BUFFMSG+1(17),INDATA    Move in request field
+         MVI   BUFFMSG+9,C':'          Move in separator
+* - Conversion of 4 bytes in Hex -
+         ICM   R1,15,0(R6)             R1 = 4 bytes to check
+         BAL   R10,CONVHEXA            Convert to Hex
+         MVC   BUFFMSG+18(16),=CL16' - In memory -->'
+         MVC   BUFFMSG+34(8),WORKZONE  Move in Area found
+* - Validation of the storage area -
+         CLC   WORKZONE(8),INDATA+9    Test if desired value OK
+         BE    VERIFOK                 Br.. Field OK
+         MVC   BUFFMSG+42(7),=CL7' > Diff'  Space different
+         LA    R15,8
+         ST    R15,RETCODE             RC indicate error
+         B     ECRVERIF
+*
+VERIFOK  Equ  *
+         MVC   BUFFMSG+42(7),=CL7' > OK'
+         CLC   INCMD(4),=CL4'REP '     Test if the command is REP
+         BNE   ECRVERIF
+* - Get the replacement value -
+         MVC   WORKZONE(8),INDATA+18
+         BAL   R10,CONVBIN             Convert to Binary
+         LTR   R15,R15
+         BNZ   ERCARVER                Br.. if error is the char type
+*
+         LR    R5,R2
+         STCM  R5,15,0(R6)           - Modify the memory
+*
+         MVC   BUFFMSG+42(7),=CL7' > OK'
+         MVC   BUFFMSG+45(8),WORKZONE  Move in the replaced storage
+         MVC   BUFFMSG+53(7),=CL7' < New'
+ECRVERIF Equ   *
+         XR    R15,R15
+         BAL   R10,MESSAGE             Write the BUFFMSG message
+         B     FINVER
+*
+* - Error character type (not Hex) -
+ERCARVER Equ   *
+         LA    R15,2                   RC = Characters not Hex
+         BAL   R10,MESSAGE
+*
+FINVER   Equ   *
+         MODESET KEY=NZERO,MODE=PROB
+         LM    R4,R10,SAVE2
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*               - - - Level 3 Routines - - -
+*--------------------------------------------------------------
+*                       --> MESSAGE <--
+*
+* Function : Writes error messages and initializes RETCODE
+*            Received: R15 = Error message number to print
+*
+* Registers : R4-R5 = Work
+*             R10 = Return Address
+*
+MESSAGE  Equ   *
+         STM   R4,R10,SAVE3
+         LTR   R15,R15            Test if message already constructed
+         BNZ   DOMESS
+         LA    R4,K0              R4 simulates a message with RC=0
+         B     SENDMSG
+* - Construction of the message -
+DOMESS   Equ   *
+         MVI   BUFFMSG,C' '            Clear the output buffer
+         MVC   BUFFMSG+1(132),BUFFMSG
+         BCTR  R15,R0             OFFSET CALCULATION
+         SLL   R15,2                             THE MESSAGE ADDRESS
+         L     R4,TABMESSG(R15)   R4 = MESSAGE ADDRESS
+         LH    R5,2(,R4)          R5 = Length of Message
+         BCTR  R5,R0
+         EX    R5,MVCMESS         Move in ERROR MESSAGE
+SENDMSG  Equ   *
+         BAL   R10,ECRMESS        Writing or displaying the message
+         LH    R15,0(,R4)         Sets associated return code
+         C     R15,RETCODE        TEST IF RETCODE > R15
+         BNH   *+8
+         ST    R15,RETCODE        Move in RETCODE
+         LM    R4,R10,SAVE3
+         BR    R10
+*
+MVCMESS  MVC   BUFFMSG(0),4(R4)   Move in MESSAGE
+         Eject
+*--------------------------------------------------------------
+*               - - - Level 4 Routines - - -
+*--------------------------------------------------------------
+*                       --> CONVHEXA <--
+*
+* Function : Translates the contents of register 1 into hex
+*
+* Registers : R1  = Value to transform
+*             R10 = Return address
+*        WORKZONE = Area containing the result
+*
+CONVHEXA Equ   *
+         STM   R4,R10,SAVE4
+         STCM  R1,15,WORKZONE+4
+         STCM  R1,15,WORKZONE+8
+         TR    WORKZONE+4(4),TABHEXA1
+         TR    WORKZONE+8(4),TABHEXA2
+         MVC   WORKZONE(1),WORKZONE+4
+         MVC   WORKZONE+1(1),WORKZONE+8
+         MVC   WORKZONE+2(1),WORKZONE+5
+         MVC   WORKZONE+3(1),WORKZONE+9
+         MVC   WORKZONE+4(1),WORKZONE+6
+         MVC   WORKZONE+5(1),WORKZONE+10
+         MVC   WORKZONE+6(1),WORKZONE+7
+         MVC   WORKZONE+7(1),WORKZONE+11
+         LM    R4,R10,SAVE4
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*                       --> CONVBIN <--
+*
+* Function : Translates WORKZONE contents to binary in R2
+*
+* Registers : R2  = Result
+*             R5  = work
+*             R10 = Return address
+*        WORKZONE = Value to transform into 8 characters
+*
+*  Return : R2  = Value in binary
+*           R15 = 0 if OK, 12 if characters are not in hex
+*
+CONVBIN  Equ   *
+         STM   R4,R10,SAVE4
+* - Test if Hex characters only -
+         MVC   WORKZONE+8(8),WORKZONE
+         TR    WORKZONE+8(8),TABMAJUS    Translated in capital letters
+         TR    WORKZONE+8(8),TABVALHX    Translated Hex chars in white
+         CLC   WORKZONE+8(8),BLANCS
+         BNE   ERREXCAR                  Br.. Incorrect characters
+* - Conversion in Hex extended -
+         MVC   WORKZONE+8(1),WORKZONE
+         MVC   WORKZONE+12(1),WORKZONE+1
+         MVC   WORKZONE+9(1),WORKZONE+2
+         MVC   WORKZONE+13(1),WORKZONE+3
+         MVC   WORKZONE+10(1),WORKZONE+4
+         MVC   WORKZONE+14(1),WORKZONE+5
+         MVC   WORKZONE+11(1),WORKZONE+6
+         MVC   WORKZONE+15(1),WORKZONE+7
+         TR    WORKZONE+8(8),TABHXBIN   Translate Hex nums into binary
+         ICM   R2,15,WORKZONE+8
+         ICM   R5,15,WORKZONE+12
+         SLL   R2,4
+         AR    R2,R5
+         XR    R15,R15                 Indicate OK
+FINCONVB Equ   *
+         LM    R4,R10,SAVE4
+         BR    R10
+ERREXCAR Equ   *
+         LA    R15,12                  Indicate error in parameter
+         B     FINCONVB
+         Eject
+*--------------------------------------------------------------
+*                       --> EcrMess <--
+*
+* Function : Write on the message on the screen or to SYSPRINT
+*
+*   Result :   WTOMSG = Address of the front of the message
+*                     BUFFMSG = Message
+*
+ECRMESS  Equ   *
+         STM   R4,R10,SAVE4
+         TM    TMPARM,X'01'       Test if WTO or Sysprint
+         BZ    ECRSYS
+         WTO   MF=(E,WTOMSG)
+         B     FINECR
+*
+ECRSYS   Equ   *
+         PUT   SYSPRINT,BUFFMSG   WRITE THE MESSAGE
+FINECR   Equ   *
+         LM    R4,R10,SAVE4
+         BR    R10
+*
+         Eject
+         Ltorg
+*--------------------> E q u a t e s <-----------------------
+*
+* - Register equates -
+*
+R0       Equ   0
+R1       Equ   1
+R2       Equ   2
+R3       Equ   3
+R4       Equ   4
+R5       Equ   5
+R6       Equ   6
+R7       Equ   7
+R8       Equ   8
+R9       Equ   9
+R10      Equ   10
+R11      Equ   11
+R12      Equ   12
+R13      Equ   13
+R14      Equ   14
+R15      Equ   15
+*
+*-----------------> C o n s t a n t s <--------------------
+AREASIZE DC    A(WORKSIZE)
+K0       DC    F'0'
+K80      DC    H'80'
+BLANCS   DC    CL8' '
+*
+*--------------->>> TRANSLATE TABLES <<<----------------*
+*
+* Validation table for Hex Characters
+TABVALHX DC    256X'FF'
+         ORG   TABVALHX+C'A'      Letters A to F
+         DC    CL6' '
+         ORG   TABVALHX+C'0'      Numbers
+         DC    CL10' '
+         ORG
+* Uppercase translation table
+TABMAJUS DC    256AL1(*-TABMAJUS)
+         ORG   TABMAJUS+C'a'      Lower case letters
+         DC    CL9'ABCDEFGHI'
+         ORG   TABMAJUS+C'j'      Lower case letters
+         DC    CL9'JKLMNOPQR'
+         ORG   TABMAJUS+C's'      Lower case letters
+         DC    CL8'STUVWXYZ'
+         ORG
+TABHEXA1 DC    16C'0',16C'1',16C'2',16C'3'
+         DC    16C'4',16C'5',16C'6',16C'7'
+         DC    16C'8',16C'9',16C'A',16C'B'
+         DC    16C'C',16C'D',16C'E',16C'F'
+TABHEXA2 DC    16CL16'0123456789ABCDEF'
+TABHXBIN DC    16XL16'00'
+         ORG   TABHXBIN+C'a'      Letters a to f
+         DC    XL6'0A0B0C0D0E0F'
+         ORG   TABHXBIN+C'A'      Lettres A to F
+         DC    XL6'0A0B0C0D0E0F'
+         ORG   TABHXBIN+C'0'      Numbers
+         DC    XL10'00010203040506070809'
+         ORG
+         Eject
+*
+* - DCB's -
+*
+         Cnop  0,4
+SYSIN    DCB   DDNAME=SYSIN,MACRF=GM,EODAD=FININ,DSORG=PS,             *
+               RECFM=FB,LRECL=80
+SYSPRINT DCB   DDNAME=SYSPRINT,MACRF=PM,DSORG=PS,RECFM=FBA,            *
+               LRECL=133
+*
+* - - - Extension of the macros - - -
+*
+WTORMODL WTOR  TEXT=(,,80,),MF=L
+*
+* - Text of WTOR -
+WTORMSG  DC    AL2(LGWTOMG)
+         DC    C'*MemZap* Enter Command (DMP, VER, REP or STOP) :'
+LGWTOMG  Equ   *-WTORMSG-2
+*
+*------------------------------------------------------------
+*
+* Message table (Retcode, Length, Text)
+*
+*------------------------------------------------------------
+         Cnop  0,4
+TABMESSG Equ   *
+         DC    A(MSG1),A(MSG2),A(MSG3),A(MSG4),A(MSG5)
+MSG1     DC    H'0',AL2(LGMSG1)
+         DC    C'1 - -  M e m Z a p  - - Zapping memory (v1.5)'
+LGMSG1   EQU   *-MSG1-4
+MSG2     DC    H'4',AL2(LGMSG2)
+         DC    C' * The characters do not represent Hex numbers  '
+LGMSG2   EQU   *-MSG2-4
+MSG3     DC    H'12',AL2(LGMSG3)
+         DC    C' * Command unknown  '
+LGMSG3   EQU   *-MSG3-4
+MSG4     DC    H'0',AL2(LGMSG4)        Blank line
+         DC    C'   '
+LGMSG4   EQU   *-MSG4-4
+MSG5     DC    H'12',AL2(LGMSG5)
+         DC    C' * Additional msg '
+LGMSG5   EQU   *-MSG5-4
+*
+*------------------------------------------------------------
+*
+         Eject
+*---------------------> D s e c t <--------------------------
+*
+* Description of the work area (WorkArea)
+*
+WORKAREA DSECT
+SAVEAREA DS    18F                Save Area
+SAVE1    DS    7F                 SAVEAREA of level 1
+SAVE2    DS    7F                 SAVEAREA of level 2
+SAVE3    DS    7F                 SAVEAREA of level 3
+SAVE4    DS    7F                 SAVEAREA of level 4
+SAVER15  DS    F
+*
+RETCODE  DS    F                  Return code
+WTOECB   DS    F                  ECB for WTORWTOR
+TMPARM   DS    C                  Witness to the existence of a Parm
+*
+WTOMSG   DS    F                  Screen writing buffer
+BUFFMSG  DS    CL133              File write buffer
+*
+BUFFIN   Equ   *                  Read in buffer
+INCMD    DS    CL4
+INDATA   DS    CL76
+*
+WORKZONE DS    CL16
+*
+WORKSIZE Equ   *-WORKAREA         Length of Work Area
+*-----------------------------------------------------------*
+         END

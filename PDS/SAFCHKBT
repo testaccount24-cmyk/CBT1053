@@ -1,0 +1,25 @@
+//SAFCHKBT JOB ('BaphCorp'),'Test Pgm',MSGCLASS=H,CLASS=A,REGION=7M,    JOB03796
+//             MSGLEVEL=(1,1),NOTIFY=&SYSUID
+//*
+//*-----------------------*
+//* SAFCHECK en programme *
+//*-----------------------*
+//*
+//SAFCHKBT EXEC PGM=SAFCHECK,
+//         PARM='FACILITY BPX.SUPERUSER read TzssY01'
+//STEPLIB  DD  DISP=SHR,DSN=TZSSY03.USER.LOADLIB
+//SYSPRINT DD  SYSOUT=*
+//SYSUDUMP DD  SYSOUT=*
+//*
+//*-------------------------------*
+//* SAFCHECK en command processor *
+//*-------------------------------*
+//*
+//SAFCHKTS EXEC  PGM=IKJEFT1B,
+//         PARM='%SAFCHECK FACILITY ''BPX.SUPERUSER'' read'
+//STEPLIB  DD  DISP=SHR,DSN=TZSSY03.USER.LOADLIB
+//SYSEXEC  DD  DISP=SHR,DSN=TZSSY03.USER.EXEC
+//SYSTSPRT DD  SYSOUT=*
+//SYSUDUMP DD  SYSOUT=*
+//SYSTSIN  DD  DUMMY
+//

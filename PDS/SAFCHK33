@@ -1,0 +1,563 @@
+*        TITLE '* SAFCHECK : Checks a user's right *'
+*--------------------------------------------------------------------
+*    - How to call SAFCHECK -
+*       TSO   : SAFCHECK Class Resource Access User
+*       Batch : EXEC PGM=SAFCHECK,PARM='Class Resource Access User'
+*
+*   * * User, Class & Access are automaticaly translated in uppercase
+*
+* LinkEdit Attr : RENT REUS REFR
+* AMODE         : 31
+* RMODE         : ANY
+* AC            : 01
+*
+*        Author : Alain Barth{lemy   ( Alain.BarthelemyàBaphCorp.fr )
+*--------------------------------------------------------------------
+*                       --> SAFCHECK <--
+*
+* Function : Checks the user's right to the indicated resource
+*            Mixed program, callable in batch or in TSO Command
+*
+*  Receive : R1 = Parameter address via Command proc. TSO or Exec Parm
+*                 Class & Resource are mandatory
+*                 User   = * (Take the calling account)
+*                 Access = Read / Update / Control / Alter
+*                         (Default is Read, * = Read)
+*
+*   Return : R15 = Return Code >>  0 = Ok    4 = Undefined
+*                                            8 = Not Allowed
+*                                           12 = Parameter in error
+*                                                or omitted
+*  Usage   : R4    = Work
+*            R8    = Save Return code
+*            R10   = Sub-Functions Return
+*            R11   = Workarea address
+*            R12   = Base register
+*
+SAFCHECK CSECT
+SAFCHECK Amode 31
+SAFCHECK Rmode Any
+*
+         Using SAFCHECK,R12
+         Using WORKAREA,R11       Base for Work Area
+*
+         STM   R14,R12,12(R13)    Save Registers from calling Pgm
+         LR    R12,R15            Program addressability
+         LR    R10,R1             R10 = Parameter List Address
+         B     GETAREA
+*
+EYECATCH DC    CL16'SAFCHECK v3.3'
+         DC    CL16'&SYSDATE &SYSTIME'
+         DC    CL16'(c)BaphCorp 2024'
+*
+* - Create workspace -
+*
+GETAREA  Equ   *
+         L     R0,AREASIZE        R0 = Dynamic area size
+         GETMAIN RU,LV=(0)        Get necessary memory
+         LR    R11,R1             R11 = Adressability Work Area
+         ST    R13,SAVEAREA+4     Chaining SA down
+         ST    R11,8(R13)         Chaining SA up
+         LR    R13,R11            R13 = Save Area Adress
+         LR    R1,R10             Restore R1 to Parameter List Address
+*
+         Eject
+*
+SUITE    Equ   *
+         BAL   R10,INIT           Initialization WorkArea
+         BAL   R10,GETPARAM       Retrieves parameters
+         LTR   R15,R15            Test if Parameters OK
+         BNZ   THEEND
+         BAL   R10,VALDROIT       Validates the requested right
+*
+* - Free WorkArea and Return -
+*
+THEEND   EQU   *
+         LR    R8,R15             Save Return Code
+         L     R13,SAVEAREA+4     Restore R13
+         L     R0,AREASIZE        R0 = Dynamic area size
+         LR    R1,R11             R1 = Dynamic area address
+         FREEMAIN RU,LV=(0),A=(1)
+         LR    R15,R8             Puts Return Code in R15
+         L     R14,12(R13)        Restore registers
+         LM    R0,R12,20(R13)                       and return
+         BR    R14
+         Eject
+*
+*--------------------------------------------------------------
+*               - - - Sub-Functions Level 1 - - -
+*--------------------------------------------------------------
+*                       --> INIT <--
+*
+* Function : Initialization of the Workarea
+*
+* Usage   : R4-R5 = Work
+*           R10   = Return address
+*
+INIT     EQU   *
+         STM   R4,R10,SAVE1
+*              - Initialization -
+         LA    R4,TABBLANC
+         ST    R4,PLSEPAR         Init Adr. Table of blank separator
+         LA    R4,TBMOTSYS
+         ST    R4,PLADPARM+8      Init Adr. Table of words
+         LA    R4,14
+         ST    R4,TBMOTSYS        Init Nb. entries in table of words
+         MVC   RACCHECK(LRACMODL),RACMODEL    Init Exec list RACF
+         MVC   RACLASS+1(8),BLANCS       Set RACF Class to blank
+         MVI   RACRESS+4,C' '
+         MVC   RACRESS+5(254),RACRESS+4  Set RACF resource to blank
+         MVC   RACACC(8),ASTERIX         Default Access (*)
+         MVC   RACUSER(8),ASTERIX        Default User   (*)
+         XC    RACVOL(6),RACVOL          Reset Volume (for Dataset)
+*
+         LM    R4,R10,SAVE1
+         BR    R10
+         Eject
+*--------------------------------------------------------------
+*                       --> GETPARAM <--
+*
+* Function : Get and analyze parameters
+*
+*         Receive : R1  = Exec Parm or TSO Parameter List address
+*          Return : R15 = Return code
+*
+*   Usage : R4-R5 = Work
+*           R6  = Word's table address
+*           R10 = Return Address
+*
+GETPARAM Equ   *
+         STM   R4,R10,SAVE1
+*              - Determines Call Type -
+
+         L     R4,540(R0)      R4 = Adr Current TCB
+         L     R4,180(R4)      R4 = Adr JSCB
+         LA    R5,360(R4)      R5 = Adr Program name
+         CLC   0(6,R5),=C'IKJEFT'   Tests if the program is IKJEFT
+         BE    TSOCP           Br.. Called by TSO Command Processor
+*
+*---- Chaining Parm in EXEC card ----*
+*
+         L     R4,0(R1)           R4 points the parameter area
+         LH    R5,0(R4)           R5 = Parameter length
+         LA    R4,2(R4)           R4 = Adr. of parameter start
+         B     ANAPARM
+*
+*---- Chaining Parm issued by Command Processor ----*
+*
+TSOCP    Equ   *
+         L     R4,0(R1)           R4 points Parameter List
+         LH    R5,0(R4)           R5 = Parameter List length
+         LH    R6,2(R4)           R6 = Offset Parameter start
+         SR    R5,R6              Removing offset
+         SH    R5,=H'3'           Removing prefix
+         LA    R4,3(R6,R4)        R4 = Adr. of parameter start
+*
+*              - Initialization -
+ANAPARM  Equ   *
+         ST    R5,PLLGPARM        Set parameter length
+         ST    R4,PLADPARM        Set parameter address
+         LA    R1,PLRCHMOT        R1 = Addr Rechmot Parameter List
+         BAL   R10,RECHMOT        Cuts parameter in words
+* Retrieves the Class
+         LA    R6,TBMOTSYS+4      R6 = Addr first word
+         LM    R4,R5,0(R6)        R4 = Size word 1  R5 = Addr word 1
+         LTR   R4,R4              Tests if line empty (No word)
+         BZ    ERRPARM            Br.. Error
+         C     R4,K8              Test if length > 8
+         BH    ERRPARM            Br.. Error
+         STC   R4,RACLASS         Stores RACF Class length
+         BCTR  R4,R0
+         EX    R4,MVCCLASS        Puts RACF Class in place
+         TR    RACLASS+1(8),TABMAJUS   Translates in upper case
+* Retrieves the resource
+         LA    R6,8(R6)           R6 = Address next word
+         LM    R4,R5,0(R6)        R4 = Size word 2   R5 = Addr word 2
+         LTR   R4,R4              Tests if resource omitted
+         BZ    ERRPARM            Br.. Error
+         CH    R4,K256            Tests if length > 255
+         BNL   ERRPARM            Br.. Error
+         ST    R4,RACRESS         Stores RACF resource length
+         BCTR  R4,R0
+         EX    R4,MVCRESS         Puts RACF resource in place
+* Retrieves requested access
+         LA    R6,8(R6)           R6 = Address next word
+         LM    R4,R5,0(R6)        R4 = Size word 3   R5 = Addr word 3
+         LTR   R4,R4              Tests if access omitted
+         BZ    VALIDACC           Br.. Default user and access
+         C     R4,K8              Tests if length > 8
+         BH    ERRPARM            Br.. Error
+         MVC   RACACC(8),BLANCS   Initialization with blank
+         BCTR  R4,R0
+         EX    R4,MVCACC          Puts requested access in place
+         TR    RACACC(8),TABMAJUS     Translates in upper case
+* Retrieves requested user
+         LA    R6,8(R6)           R6 = Address next word
+         LM    R4,R5,0(R6)        R4 = Size word 4   R5 = Addr word 4
+         LTR   R4,R4              Tests if user omitted
+         BZ    VALIDACC           Br.. End ofs parameters
+         C     R4,K8              Tests if length > 8
+         BH    ERRPARM            Br.. Error
+         MVC   RACUSER(8),BLANCS  Initialization with blank
+         BCTR  R4,R0
+         EX    R4,MVCUSER         Puts requested user
+         TR    RACUSER(8),TABMAJUS    Translates in upper case
+*  - End of parameters -
+* Access Validation
+VALIDACC Equ   *
+         LA    R6,TABACCES
+         LA    R7,NBACCES
+BCLACC   Equ   *
+         CLC   RACACC(8),0(R6)    Is it a known access ?
+         BE    ACCOK              Br.. Known Access
+         LA    R6,9(R6)           Next entry
+         BCT   R7,BCLACC
+*
+ERRPARM  Equ   *
+         LA    R15,12             Parameter error
+         B     FINPARM
+*
+ACCOK    Equ   *
+         MVC   RACACC(1),8(R6)    Puts encoded Access
+         XR    R15,R15            Init Return Code
+*
+FINPARM  Equ   *
+         LM    R4,R10,SAVE1
+         BR    R10
+*
+MVCCLASS MVC   RACLASS+1(0),0(R5)
+MVCRESS  MVC   RACRESS+4(0),0(R5)
+MVCUSER  MVC   RACUSER(0),0(R5)
+MVCACC   MVC   RACACC(0),0(R5)
+         Eject
+*----------------------------------------------------------------
+*                       --> VALDROIT <--
+*
+* Function : Request submitted to the SAF
+*
+*   Usage : R4-R7 = Work
+*             R10 = Return Address
+*             R15 = Return Code
+*
+VALDROIT Equ   *
+         STM   R4,R10,SAVE1       Save Registers
+         MODESET MODE=SUP         Puts to supervisor mode
+         XR    R4,R4              Clear register
+         IC    R4,RACACC          Get required authority
+         CLI   RACUSER,C'*'       Tests if default value
+         BE    OWNAUTH
+*-----------------------------------------------
+*        RACF Request for someone else
+*------------------------------------------------
+OTHAUTH  Equ   *
+         CLC   RACLASS+1(7),=CL7'DATASET'
+         BE    OTHDSNCK           Br.. Test dataset resource
+         RACROUTE REQUEST=AUTH,                                        *
+               APPL=APPLNAME,                                          *
+               USERID=RACUSER,                                         *
+               CLASS=RACLASS,                                          *
+               ENTITYX=(RACRESS,NONE),                                 *
+               ATTR=(R4),                                              *
+               WORKA=RACFWORK,                                         *
+               MSGSUPP=YES,                                            *
+               RELEASE=77B0,                                           *
+               MF=(E,RACCHECK)
+         B     ENDVAL
+*-----------------------------------------------
+*        DATASET Request for someone else
+*------------------------------------------------
+OTHDSNCK Equ   *
+         RACROUTE REQUEST=AUTH,                                        *
+               APPL=APPLNAME,                                          *
+               CLASS=RACLASS,                                          *
+               ENTITYX=(RACRESS,NONE),                                 *
+               ATTR=(R4),                                              *
+               USERID=RACUSER,                                         *
+               VOLSER=RACVOL,                                          *
+               WORKA=RACFWORK,                                         *
+               MSGSUPP=YES,                                            *
+               RELEASE=77B0,                                           *
+               MF=(E,RACCHECK)
+         B     ENDVAL
+*------------------------------------------------
+*        RACF request for myself
+*------------------------------------------------
+OWNAUTH  Equ   *
+         CLC   RACLASS+1(7),=CL7'DATASET'
+         BE    OWNDSNCK           Br.. Test dataset resource
+         RACROUTE REQUEST=AUTH,                                        *
+               APPL=APPLNAME,                                          *
+               CLASS=RACLASS,                                          *
+               ENTITYX=(RACRESS,NONE),                                 *
+               ATTR=(R4),                                              *
+               WORKA=RACFWORK,                                         *
+               MSGSUPP=YES,                                            *
+               RELEASE=77B0,                                           *
+               MF=(E,RACCHECK)
+         B     ENDVAL
+*------------------------------------------------
+*        DATASET request for myself
+*------------------------------------------------
+OWNDSNCK Equ   *
+         RACROUTE REQUEST=AUTH,                                        *
+               APPL=APPLNAME,                                          *
+               CLASS=RACLASS,                                          *
+               ENTITYX=(RACRESS,NONE),                                 *
+               ATTR=(R4),                                              *
+               VOLSER=RACVOL,                                          *
+               WORKA=RACFWORK,                                         *
+               MSGSUPP=YES,                                            *
+               RELEASE=77B0,                                           *
+               MF=(E,RACCHECK)
+ENDVAL   Equ   *
+         LR    R5,R15             Save Return Code
+         MODESET MODE=PROB        Back to problem mode
+         LR    R15,R5
+         LM    R4,R10,SAVE1       Restore registers
+         BR    R10
+*
+         Eject
+*--------------------------------------------------------------
+*               - - - Sub-Functions Level 3 - - -
+*--------------------------------------------------------------
+*                       --> RECHMOT <--
+*
+* Function : Analyzes a character string to create an array with
+*            the words composing it
+*
+*           Receive : R1  = Adress of Parameter List
+*
+* Parameter List : | LGCHAI | ADRCHAI | TABTRT | TABMOTS |
+*                  +--------+---------+--------+---------+
+*                  - LgChai  : Size of the character string
+*                  - AdrChai : Adress of the character string
+*                  - TabTrt  : Adress of the separators array
+*                  - TabMots : Adress of the words array
+*
+*            Return : Words array initialized
+*
+*   Usage : R4  = Work (Size of the analyzed string)
+*           R5  = Work (Point the beginning of the string)
+*           R6  = Point the separators array (TRT)
+*           R7  = Point the words array (TABMOTS)
+*           R8  = Work (Number of entries in the array , BCT)
+*           R9  = Point the end of the string
+*           R10 = Return Address
+*
+RECHMOT  EQU   *
+         STM   R4,R10,SAVE3
+         LM    R4,R7,0(R1)        Loads the parameter List
+* - Initialize the words array -
+         L     R8,0(R7)           R8 = Number of entries in the array
+         LA    R9,4(R7)           R9 = Point the beginning of the array
+         XR    R15,R15
+INITBMOT EQU   *
+         ST    R15,0(R9)          Puts the word length to zero
+         ST    R15,4(R9)          Puts the word address to zero
+         LA    R9,8(R9)           Points to the next entry
+         BCT   R8,INITBMOT
+* - Start treatment -
+         L     R8,0(R7)           R8 = Number of entries
+         BCTR  R8,R0              R8 = Number of words to analyze
+         LA    R9,0(R4,R5)        R9 = Addr. End of the string + 1
+         LA    R7,4(R7)           R7 = Addr. First entry in words array
+BCLMOT   EQU   *
+* Look up the beginning of the word
+         LR    R4,R9
+         SR    R4,R5              R4 = Size of the rest of the string
+         BZ    FINRECHM           Br.. String empty
+         LR    R2,R4              R2 = Length to analyze
+         CH    R2,K256
+         BNH   TRTDEBW
+         LA    R2,256             Analyze limited to 256 characters
+TRTDEBW  EQU   *
+         BCTR  R2,R0
+         EX    R2,TRTNBLAN        Look up the first non blank char.
+         BNZ   YADEBMOT           Br.. Start of the word found
+         CH    R4,K256            Tests if string longer than 256
+         BNH   FINRECHM           Br.. All is blank
+         LA    R5,256(R5)         R5 points after the 256 blanks
+         B     BCLMOT             Br.. Return to word search
+*
+YADEBMOT EQU   *
+         LA    R6,TABBLANC        Loads separator array (Blank)
+         CLI   0(R1),X'7D'        Tests if the separator is a quote
+         BNE   STRTMOT
+         LA    R1,1(R1)           Skip the quote
+         LA    R6,TABSEPAR        Loads separator array (Quote)
+STRTMOT  Equ   *
+         LR    R5,R1              R5 = Addr. start of word
+         ST    R5,4(R7)           Puts start of word address in TABMOTS
+* Recherche la fin du mot
+BCLFINW  EQU   *
+         LR    R4,R9              R4 = Addr. End of string + 1
+         SR    R4,R5
+         LR    R2,R4              R2 = Length to analyze
+         CH    R2,K256
+         BNH   TRTFINW
+         LA    R2,256             Analyze limited to 256 characters
+TRTFINW  EQU   *
+         BCTR  R2,R0              R2 = Length to analyze - 1
+         EX    R2,TRTBLANC        Search end of word (Blank/Separator)
+         BNZ   CALCLG             Br.. End of word found
+         CH    R4,K256            Tests if string longer than 256
+         BNH   FIN2CHAM           Br.. All is blank
+         LA    R5,256(R5)         R5 points after the 256 blanks
+         B     BCLFINW            Br.. Return to end search
+*
+FIN2CHAM EQU   *
+         LR    R1,R9              End of string : Force R1= End +1
+CALCLG   EQU   *                  Compute size of word
+         LR    R4,R1
+         S     R4,4(R7)           R4 = Word length
+         BNZ   PASSEP             Br.. if not separator
+         LA    R4,1               Separator Length = 1
+         LA    R1,1(R1)           Adjusts Start for next analyze
+PASSEP   EQU   *
+         ST    R4,0(R7)           Puts Word length in TABMOTS
+         LR    R5,R1
+         EX    R2,TESTCOTE        Tests if quote
+         BNE   BASBCL
+         LA    R5,1(R5)           R5 points after the quote
+BASBCL   Equ   *
+         LA    R7,8(R7)
+         BCT   R8,BCLMOT
+* Treats the rest of the string in the last entry in TABMOTS
+         SR    R9,R5              R5 = Length of the remaining string
+         ST    R9,0(R7)           Puts length in the last TABMOTS entry
+         ST    R5,4(R7)           Puts addr remaining string
+FINRECHM EQU   *
+         LM    R4,R10,SAVE3
+         BR    R10
+*
+TRTNBLAN TRT   0(0,R5),TABNBLAN  Search beginning of word (non-blank)
+TRTBLANC TRT   0(0,R5),0(R6)     Search end of word (Blank / Separator)
+TESTCOTE CLI   =X'7D',X'00'      Tests if quote
+         Eject
+         LTORG
+*--------------------> E q u a t e s <-----------------------
+*
+R0       Equ   0
+R1       Equ   1
+R2       Equ   2
+R3       Equ   3
+R4       Equ   4
+R5       Equ   5
+R6       Equ   6
+R7       Equ   7
+R8       Equ   8
+R9       Equ   9
+R10      Equ   10
+R11      Equ   11
+R12      Equ   12
+R13      Equ   13
+R14      Equ   14
+R15      Equ   15
+*
+*-----------------> C o n s t a n t s <----------------------
+K8       DC    F'8'
+K4       DC    H'4'
+K256     DC    H'256'
+AREASIZE DC    A(WORKSIZE)
+ASTERIX  DC    CL1'*'
+BLANCS   DC    CL16' '
+APPLNAME DC    CL8'SAFCHECK'      Application name
+* Parameter List model for RACROUTE
+RACMODEL RACROUTE REQUEST=AUTH,                                        *
+               ATTR=READ,                                              *
+               RELEASE=77B0,                                           *
+               MF=L
+LRACMODL Equ   *-RACMODEL
+*
+*---------->>> Tables for access validation <<<--------------*
+*
+         Cnop  0,4
+KREAD    Equ   TABACCES
+TABACCES DC    CL8'READ',X'02'     Read
+         DC    CL8'UPDATE',X'04'   Update
+         DC    CL8'CONTROL',X'08'  Control
+         DC    CL8'ALTER',X'80'    Alter
+         DC    CL8'*',X'02'        Read  (Default value)
+NBACCES  Equ   (*-TABACCES)/9
+*
+*--------------->>> Work Tables <<<---------------*
+*
+* Research table for the first non-blank character
+TABNBLAN DC    256X'FF'
+         ORG   TABNBLAN+C' '      Blank
+         DC    X'00'
+         ORG
+* Research table for the first blank
+TABBLANC DC    256X'00'
+         ORG   TABBLANC+C' '      Blank
+         DC    X'40'
+         ORG
+* Separators table to research end of word with cote
+TABSEPAR DC    256X'00'
+         ORG   TABSEPAR+X'7D'     Separator '
+         DC    X'7D'
+         ORG
+* Table to translate in upper case
+TABMAJUS DC    256AL1(*-TABMAJUS)
+         ORG   TABMAJUS+C'a'      Lower case letters
+         DC    CL9'ABCDEFGHI'
+         ORG   TABMAJUS+C'j'      Lower case letters
+         DC    CL9'JKLMNOPQR'
+         ORG   TABMAJUS+C's'      Lower case letters
+         DC    CL8'STUVWXYZ'
+         ORG
+         Eject
+*---------------------> D s e c t <--------------------------
+*
+* Description of the Work Area
+*
+WORKAREA DSECT
+SAVEAREA DS    18F                Save Area
+SAVE1    DC    7F'0'              SAVEAREA Level 1
+SAVE2    DC    7F'0'              SAVEAREA Level 2
+SAVE3    DC    7F'0'              SAVEAREA Level 3
+*
+* - Param}tres pour RACF -
+*
+RACUSER  DS    CL8                RACF Userid requested
+RACLASS  DS    AL1                Size of RACF Class name
+         DS    CL8                RACF Class name
+RACACC   DS    CL8                Access requested
+RACVOL   DS    CL6                Volume for DATASET class
+RACRESS  DS    A                  Siz of the RACF resource
+         DS    CL255              Name of the RACF resource
+RACFWORK DS    XL512              RACF workarea
+*
+* - -Parameter Lists - -
+*
+* Parameter List for RECHMOT
+         Cnop  0,4
+PLRCHMOT Equ   *
+PLLGPARM DS    F'0'
+PLADPARM DS    A(0)
+PLSEPAR  DS    A(TABBLANC),A(TBMOTSYS)
+*
+* Parameter List for RACROUTE
+RACCHECK RACROUTE REQUEST=AUTH,                                        *
+               APPL=APPLNAME,                                          *
+               CLASS=RACLASS,                                          *
+               ENTITYX=RACRESS,                                        *
+               ATTR=READ,                                              *
+               WORKA=RACFWORK,                                         *
+               RELEASE=77B0,                                           *
+               MF=L
+         Eject
+*----------------->>> Word search table <<<-----------------*
+*
+* Word table for parameter analysis (13 words + 1)
+TBMOTSYS DC    A(LGMOTSYS/8)   Number of entries in the table
+         DS    28A             Word table (Lg-Adr for each word)
+LGMOTSYS EQU   *-TBMOTSYS-4    Size of the table TBMOTSYS
+*
+WORKSIZE Equ   *-WORKAREA      Length of Work Area
+*
+*-----------------------------------------------------------*
+* Parameter List TSO
+         IKJCPPL
+         ICHSAFP
+         END

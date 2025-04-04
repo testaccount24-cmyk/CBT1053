@@ -1,0 +1,17 @@
+//KDSLIST  JOB ('BaphCorp'),'List Icsf KDS',MSGCLASS=S,CLASS=A,
+//             MSGLEVEL=(1,1),NOTIFY=&SYSUID,REGION=8M
+//*
+//*-----------------------------------------*
+//*   - List the content of an ICSF Kds -   *
+//*-----------------------------------------*
+//*
+//         SET CKDS=SCSF.BAPHCORP.CKDS    << Ckds
+//*
+//* - Analysis of CKDS -
+//*
+//LISTKDS  EXEC PGM=IKJEFT1B,PARM='%KDSLIST &CKDS. Long'
+//SYSEXEC  DD  DISP=SHR,DSN=SCSF.ICSF.EXEC       << Library for Rexx
+//SYSTSPRT DD  SYSOUT=*
+//SYSTSIN  DD  DUMMY
+//OUT      DD  DISP=SHR,DSN=TZSSY03.USER.LIST(LISTCKDS) << Result
+//

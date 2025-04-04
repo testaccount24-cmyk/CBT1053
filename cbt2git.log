@@ -1,0 +1,24 @@
+2025-04-04 04:18:00.288289 - Received CBT.V508.FILE1053.PDS from FILE1053.XMI 
+2025-04-04 04:18:00.289490 - Found $$$#DATE.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/$$$#DATE
+2025-04-04 04:18:00.289631 - Found $$DOC$$.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/$$DOC$$
+2025-04-04 04:18:00.289800 - Found @FIL1053.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/@FIL1053
+2025-04-04 04:18:00.290178 - Found AUPGM.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/AUPGM
+2025-04-04 04:18:00.290296 - Found AUPGM$.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/AUPGM$
+2025-04-04 04:18:00.290412 - Found AUPGM#.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/AUPGM#
+2025-04-04 04:18:00.290551 - Found COMPASM.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/COMPASM
+2025-04-04 04:18:00.290676 - Found KDSLIST.rexx (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/KDSLIST
+2025-04-04 04:18:00.290907 - Found KDSLIST#.pdf (application/pdf) in CBT.V508.FILE1053.PDS, moved to docs/KDSLIST#.pdf
+2025-04-04 04:18:00.291079 - Found KDSLIST@.docx (application/vnd.openxmlformats-officedocument.wordprocessingml.document) in CBT.V508.FILE1053.PDS, moved to docs/KDSLIST@.docx
+2025-04-04 04:18:00.291199 - Found KDSLJCL.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/KDSLJCL
+2025-04-04 04:18:00.291323 - Found KDSLJCLF.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/KDSLJCLF
+2025-04-04 04:18:00.291456 - Found KDSLTSO.rexx (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/KDSLTSO
+2025-04-04 04:18:00.291578 - Found MEMZAP.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/MEMZAP
+2025-04-04 04:18:00.291695 - Found MEMZAP$.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/MEMZAP$
+2025-04-04 04:18:00.291847 - Found MEMZAPC.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/MEMZAPC
+2025-04-04 04:18:00.291967 - Found MEMZAPJ1.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/MEMZAPJ1
+2025-04-04 04:18:00.292075 - Found MEMZAPP.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/MEMZAPP
+2025-04-04 04:18:00.292234 - Found SAFCHECK.rexx (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/SAFCHECK
+2025-04-04 04:18:00.292487 - Found SAFCHKAS.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/SAFCHKAS
+2025-04-04 04:18:00.292638 - Found SAFCHKBT.jcl (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/SAFCHKBT
+2025-04-04 04:18:00.292778 - Found SAFCHK33.txt (text/plain) in CBT.V508.FILE1053.PDS, moved to PDS/SAFCHK33
+2025-04-04 04:18:00.293115 - Found SAFCKDOC.bin (application/octet-stream) in CBT.V508.FILE1053.PDS, moved to PDS/SAFCKDOC

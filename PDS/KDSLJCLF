@@ -1,0 +1,29 @@
+//KDSLISTF JOB ('BaphCorp'),'List Icsf KDS',MSGCLASS=S,CLASS=A,
+//             MSGLEVEL=(1,1),NOTIFY=&SYSUID,REGION=8M
+//*
+//*--------------------------------------------------*
+//*   - List the content of a flattened ICSF Kds -   *
+//*--------------------------------------------------*
+//*
+//         SET CKDS=SCSF.BAPHCORP.CKDS    << Ckds
+//*
+//* - Copy the CKDS on a flat file - *
+//*
+//COPYKDS  EXEC PGM=IDCAMS
+//SYSPRINT DD  SYSOUT=*
+//FILEIN   DD  DISP=SHR,DSN=&CKDS.
+//FILEOUT  DD  DISP=(,PASS),DSN=&&TMP,UNIT=3390,
+//             SPACE=(CYL,(20,5),RLSE),RECFM=VB,LRECL=32756
+//SYSIN    DD *
+  REPRO IFILE(FILEIN) OFILE(FILEOUT)
+/*
+//*
+//* - Analysis of CKDS from a flat file -
+//*
+//LISTKDS  EXEC PGM=IKJEFT1B,PARM='%KDSLIST &CKDS. Long'
+//SYSEXEC  DD  DISP=SHR,DSN=SCSF.ICSF.EXEC       << Library for Rexx
+//SYSTSPRT DD  SYSOUT=*
+//SYSTSIN  DD  DUMMY
+//OUT      DD  DISP=SHR,DSN=TZSSY03.USER.LIST(LISTCKDS) << Result
+//KDS      DD  DISP=(OLD,PASS),DSN=&&TMP
+//

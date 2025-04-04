@@ -1,0 +1,918 @@
+/* Rexx : List ICSF's KDS                           Version 3.3   */
+/*                                         (c) BaphCorp 2018-2024 */
+/*                                                                */
+   Address TSO
+   Vers = "3.3"
+
+   Cr = INIT(arg(1))    /* Initialization */
+   If Cr <> 0 then do;
+      Call ERROR 30
+      Return Cr
+   ENd;
+
+      /* Identify KDS type */
+   Call TRTENRG1 Fic.1
+   Out.0 = EDITETE()         /* Build Header */
+      /* Analyze KDS file */
+   Do I = 2 to Fic.0
+      Call TRTENRGX Fic.I
+      Out.0 = EDITLINE()     /* Build lines */
+   End
+   If CurEnv <> "TSU"  then do;
+      Call ERROR 999         /* Blank line */
+      Call ERROR 31 Fic.0-1
+   End;
+   Call EDITFIN Fic.0-1      /* Build trailer and Write OUT file */
+
+Return 0
+
+/*                    */
+/*   Initialization   */
+/*                    */
+INIT :
+   CurEnv = left(GETJNUM(),3)
+   If CurEnv = "TSU" then do 4;
+      Call ERROR 999
+   End;
+   Else do;
+      Call ERROR 100 Vers
+      Call ERROR 999        /* Blank line */
+   End;
+
+      /* Parameters validation */
+
+   Arg DsnKDS EdForm .
+
+   If DsnKDS = "" then DsnKDS = "*"
+   Select
+      When Abbrev("SHORT",EdForm,1)  then EdForm = "Short"
+      When Abbrev("MEDIUM",EdForm,1) then EdForm = "Medium"
+      When Abbrev("LONG",EdForm,1)   then EdForm = "Long"
+      Otherwise EdForm = ""
+   End
+   If CurEnv = "TSU" then DefForm = "Short"
+   Else DefForm = "Medium"
+
+      /* Variables Initialization */
+
+   Parse value "." with Mkvp. Out. Kds.
+
+      /* Files Verification */
+
+            /* KDS file */
+   Parse value VALIDSN("DD=KDS") with Rc Dsn KDsorg KLrecl .
+   If Rc > 4 then do;
+      If Rc = 12 & DsnKDS <> "*" then do
+         Parse value VALIDSN(DsnKDS) with Rc Dsn KDsorg KLrecl .
+         If Rc > 4 then Return ERROR(Rc "KDS" Dsn)
+         "ALLOC DD(KDS) SHR DSN('"DsnKDS"')"
+         KdsDyn = "Yes"
+      End
+      Else Return ERROR(Rc "KDS" Dsn)
+   End;
+   If DsnKDS = "*" then DsnKDS = Dsn
+
+            /* OUT file */
+   Parse value VALIDSN("DD=OUT") with Rc DsnOut Dsorg Lrecl .
+   If Rc = 6 | Rc = 12 then Rc = 0
+   If Rc <> 0 then Return ERROR(Rc "OUT" DsnOut)
+   Select
+      When DsnOut = "" & EdForm = ""       then Edform = DefForm
+      When DsnOut = "" & EdForm = "Long"   then Edform = DefForm
+      When DsnOut = ""                     then nop
+      When EdForm = "" & Lrecl > 200       then Edform = "Long"
+      When EdForm = "" & Lrecl > 131       then Edform = "Medium"
+      When EdForm = "Long"   & Lrecl > 200 then Edform = "Long"
+      When EdForm = "Medium" & Lrecl > 131 then Edform = "Medium"
+      When Lrecl > 79                      then Edform = "Short"
+      Otherwise Return ERROR(14 Lrecl)
+   End
+
+          /* Reading KDS file */
+
+   Msg = MSG('OFF')
+   If KDsorg = "VS" then do;
+      "FREE DD(TMPKDS)"
+      "ALLOC DD(TMPKDS) NEW LRECL(32756) RECFM(V B)"    ,
+                                       "CYL SPACE(5 5) UNIT(VIO)"
+      "REPRO IFILE(KDS) OFILE(TMPKDS)"
+      If Rc = 0 then "EXECIO * DISKR TMPKDS (FINIS STEM FIC."
+   End;
+   Else "EXECIO * DISKR KDS (FINIS STEM FIC."
+   Cr = Rc
+   If KDsorg = "VS" then "FREE DD(TMPKDS)"
+   If KdsDyn = "Yes"  then "FREE DD(KDS)"
+   Msg = MSG(Msg)
+   If Cr <> 0 then Return ERROR(29 Cr)
+
+Return 0
+/*                                                                */
+/*  GETJNUM : Retrieve JobNum                                     */
+/*                                                                */
+GETJNUM : Procedure
+   TCB     = C2D(Storage(021C,4))             /* Point to TCB  */
+   JSCB    = C2D(Storage(D2X(TCB  + 180), 4)) /* Point to JSCB */
+   SSIB    = C2D(Storage(D2X(JSCB + 316), 4)) /* Point to SSIB */
+   JobNum  = Storage(D2X(SSIB + 12), 8)       /* Get Jobnumber */
+Return JobNum
+/* -------------------- S u b - R o u t i n e s -------------------*/
+/*                                                                 */
+/*   TRTENRG1 : Analyze first record of xKDS file                  */
+/*                                                                 */
+/* RCS : Regional Cryptographic Servers                            */
+/*                                                                 */
+TRTENRG1 : Procedure expose Mkvp. Kds. KLrecl KDsorg
+
+   Call GETYPMKV arg(1)   /* Retrieve KDS type and MKVP */
+
+      /* - - Retrieve KDS dates and format the MKVP - - */
+
+   Select
+      When Kds.1 = "CKDS" then do;
+         Parse arg 73 CrDate 81 CrTime 89 UpDate 97 UpTime 105 .    ,
+                                                        107 HFlag 109
+         HFlag = x2b(c2x(HFlag))
+         If left(HFlag,1) = 1     then Mkvp.1.1 = c2x(Mkvp.1) /* DES */
+         If substr(HFlag,3,1) = 1 then Mkvp.2.1 = c2x(Mkvp.2) /* AES */
+      End;
+      When Kds.1 = "PKDS" then do;
+         Parse arg 73 CrDate 81 CrTime 89 UpDate 97 UpTime 105 .    ,
+                                                        157 HFlag 158
+         If Mkvp.3 <> copies('00'x,16) then do;
+            Mkvp.3.1 = c2X(left(Mkvp.3,8))                    /* RSA */
+            Mkvp.3.2 = c2X(right(Mkvp.3,8))
+         End;
+         If Mkvp.4 <> copies('00'x,8) then ,                  /* ECC */
+            Mkvp.4.1 = c2X(left(Mkvp.4,8))
+      End;
+      Otherwise do;       /* TKDS */
+         Parse arg 81 CrDate 89 CrTime 97 UpDate 105 UpTime 113 .   ,
+                                                        149 HFlag 150
+         If Mkvp.5 <> copies('00'x,16) then do;
+            Mkvp.5.1 = c2X(left(Mkvp.5,8))                    /* P11 */
+            Mkvp.5.2 = c2X(right(Mkvp.5,8))
+         End;
+         If Mkvp.6 <> copies('00'x,16) then do;
+            Mkvp.6.1 = c2X(left(Mkvp.6,8))                    /* RCS */
+            Mkvp.6.2 = c2X(right(Mkvp.6,8))
+         End;
+      End;
+   End
+
+      /* - - Format Dates and times - - */
+
+   Kds.3.1 = translate("7895601234",CrDate,"1234567890","-")
+   Kds.3.2 = translate("12734756",left(CrTime,6),"1234567",":")
+   If UpDate = copies('00'x,8) then do;
+      Kds.3.3 = ""
+      Kds.3.4 = ""
+   End;
+   Else do;
+      Kds.3.3 = translate("7895601234",UpDate,"1234567890","-")
+      Kds.3.4 = translate("12734756",left(UpTime,6),"1234567",":")
+   End;
+Return 0
+/*                                                                 */
+/* GETYPMKV : Identify KDS type and Data format                    */
+/*            (Initialize MKVP extracted from header)              */
+/*                                                                 */
+GETYPMKV : Procedure expose Mkvp. Kds. KLrecl KDsorg
+   Parse Arg 41 TagTkds 45 . 105 LgPkds 109 .
+
+      /* - - Identify KDS type - - */
+
+   Select
+      When TagTkds = "THDR"      then do;
+         Kds.1 = "TKDS"
+         Parse arg 117 Mkvp.5 133 Mkvp.6 149 . 155 RecVers 156
+      End;
+      When LgPkds  = '000000B4'x then do;
+         Kds.1 = "PKDS"
+         Parse arg 125 Mkvp.3 141 Mkvp.4 149 . 159 RecVers 160
+      End;
+      Otherwise do;
+         Kds.1 = "CKDS"
+         Parse arg 109 Mkvp.1 117 . 125 Mkvp.2 133 RecLg 137 RecVers 138
+      End;
+   End
+
+      /* - - Identify Data format - - */
+
+   Select
+      When KDsorg = "VS" & Kds.1 = "CKDS" then do;
+         Select
+            When KLrecl = 32756   then Kds.2 = "KdsrL"
+            When KLrecl = 2048    then Kds.2 = "Kdsr"
+            When KLrecl = 1024    then Kds.2 = "Variable"
+            Otherwise Kds.2 = "Fixed"
+         End
+      End;
+      When KDsorg = "VS" & Kds.1 = "PKDS" &         ,
+                           KLrecl = 32756       then Kds.2 = "KdsrL"
+      When Kds.1 = "CKDS" & RecLg = '00000000'x then Kds.2 = "Fixed"
+      When RecVers = '00'x                      then Kds.2 = "Variable"
+      Otherwise Kds.2 = "Kdsr"
+   End
+Return 0
+/*                                                         */
+/*   TRTENRGX : Analyse "Key" records of the xKDS          */
+/*                                                         */
+TRTENRGX : Procedure expose Mkvp. Clef. Kds.
+
+      /* Analyzing record */
+   Clef. = "-"
+   Clef.4.1 = ""
+   Select
+      When Kds.1 = "CKDS" then Call DATACKDS Arg(1)
+      When Kds.1 = "PKDS" then Call DATAPKDS Arg(1)
+      Otherwise Call DATATKDS Arg(1)
+   End
+   If Kds.1 <> "TKDS" then Clef.6 = VALMKVP(Clef.4 Clef.4.1,Clef.7)
+
+      /* Formatting Dates and Times */
+   Clef.2.1 = translate("7895601234",CrDate,"1234567890","-")
+   Clef.2.2 = translate("12734756",left(CrTime,6),"1234567",":")
+   If UpDate = copies('00'x,8) then nop
+   Else do;
+      Clef.2.3 = translate("7895601234",UpDate,"1234567890","-")
+      Clef.2.4 = translate("12734756",left(UpTime,6),"1234567",":")
+   End;
+Return 0
+/*                                                                */
+/*   VALMKVP : Validate the MKVP in the Key record                */
+/*                                                                */
+VALMKVP : Procedure expose Mkvp.
+   Parse Arg Algo Algo2 . , KeyMkvp
+   If Algo2 <> "" then Algo = Algo2
+   Select
+      When Algo = "AES"  then KDSMkvp = Mkvp.2
+      When Algo = "HMAC" then KDSMkvp = Mkvp.2
+      When Algo = "DES"  then KDSMkvp = Mkvp.1
+      When Algo = "DDES" then KDSMkvp = Mkvp.1
+      When Algo = "TDES" then KDSMkvp = Mkvp.1
+      When Algo = "RSA"  then KDSMkvp = Mkvp.3
+      When Algo = "ECC"  then KDSMkvp = Mkvp.4
+      When Algo = "QSAF" then KDSMkvp = Mkvp.4
+      Otherwise Return "-"
+   End
+   If KeyMkvp = "-" then Return "-"
+   If KeyMkvp = copies('00'x,length(KeyMkvp)) then Return "-"
+   If KeyMkvp <> KDSMkvp then Return "Err"
+Return "Ok"
+/* ----------------------- A n a l y z e --------------------------- */
+/*                                                                   */
+/*               - - Contents of variables - -                       */
+/*                                                                   */
+/* Clef.1  = Label       Clef.2  =            Clef.3  = Token /Type  */
+/* Clef.4  = Algo        Clef.5  = Size       Clef.6  = Mk?          */
+/* Clef.7  = KeyMkvp     Clef.8  = Att        Clef.9  = Relate       */
+/* Clef.10 = Type        Clef.11 = Last Use   Clef.12 = End Valid    */
+/* Clef.13 = ArchDate                         Clef.13.2 = Last serv  */
+/* Clef.1.1 = SeqNum     Clef.2.1 = CrDate    Clef.2.2 = CrTime      */
+/* ----------------------------------------------------------------- */
+/*                                                                   */
+/*   DATACKDS : Retrieve data from a CKDS record                     */
+/*                                                                   */
+DATACKDS : Procedure expose Kds. Clef. CrDate CrTime UpDate UpTime
+
+       /* - Parse the record - */
+   Select
+      When left(Kds.2,4) = "Kdsr" then do;
+         Parse Arg Clef.1 . 65 Clef.3 . 73 89 CrDate 97 CrTime        ,
+                   105 UpDate 113 UpTime 121 MatLg  125 MatOff        ,
+                                         129 MetaLg 133 MetaOff 137
+         KeyToken = GETCHAMP(MatLg , MatOff ,, Arg(1) )
+         Metadata = GETCHAMP(MetaLg , MetaOff ,, Arg(1) )
+      End;
+      When Kds.2 = "Fixed" then do;
+         Parse Arg Clef.1 . 65 Clef.3 . 73 CrDate 81 CrTime           ,
+                              89 UpDate 97 UpTime 105 KeyToken 169
+         Metadata = ""
+      End;
+      Otherwise do;
+         Parse Arg Clef.1 . 65 Clef.3 . 73 CrDate 81 CrTime           ,
+                              89 UpDate 97 UpTime 105 . 269 KeyToken
+         Metadata = ""
+      End;
+   End
+   KeyVer = substr(KeyToken,5,1)
+       /* - Interpret the Keytoken - */
+   Select
+      When KeyVer = '00'x | KeyVer = '01'x then do;
+         Parse var KeyToken 9 Clef.7 17 60 LgKDes 61
+         Parse value "DES 8" with Clef.4 Clef.5
+         If LgKDes = '10'x then Parse value "DDES 16" with Clef.4 Clef.5
+         If LgKDes = '20'x then Parse value "TDES 24" with Clef.4 Clef.5
+      End;
+      When KeyVer = '04'x then do;
+         Parse var KeyToken 9 Clef.7 17 57 LgKAes 59
+         Parse value "AES" c2d(LgKAes) with Clef.4 Clef.5
+      End;
+      When KeyVer = '10'x then do;
+         Parse var KeyToken 9 Clef.7 17 Part1 25 Part2 33 Part3 41  ,
+                                                       60 LgKDes 61
+         Select
+            When Part3 <> copies('00'x,8) then ,
+                               Parse value "TDES 24" with Clef.4 Clef.5
+            When Part2 <> copies('00'x,8) then ,
+                               Parse value "DDES 16" with Clef.4 Clef.5
+            Otherwise Parse value "DES 8" with Clef.4 Clef.5
+         End
+      End;
+      When KeyVer = '05'x then do;
+         Parse var KeyToken 9 KStat 10 . 11 Clef.7 19 . 42 TypAlg 43 ,
+                                         57 LgKAes 59 60 LgKDes 61
+         If KStat <> '03'x then Clef.7 = "-"      /* No Mkvp */
+         Clef.4 = "DES"
+         If TypAlg = '02'x then Clef.4 = "AES"
+         If TypAlg = '03'x then Clef.4 = "HMAC"
+      End;
+      Otherwise do;
+         LgKDes = substr(KeyToken,60,2)
+         Clef.4 = "DES";    Clef.7 = "-"; /* No Mkvp */
+      End;
+   End
+Return ANAMETAD(Metadata)
+/*                                                          */
+/*   DATAPKDS : Retrieve data from a PKDS record            */
+/*                                                          */
+DATAPKDS : Procedure expose Kds. Clef. CrDate CrTime UpDate UpTime
+
+       /* - Parse the Record - */
+
+   If left(Kds.2,4) = "Kdsr" then do;
+      Parse Arg Clef.1 . 65   89 CrDate 97 CrTime                     ,
+                   105 UpDate 113 UpTime 121 MatLg  125 MatOff        ,
+                                         129 MetaLg 133 MetaOff 137
+         KeyToken = GETCHAMP(MatLg , MatOff ,, Arg(1) )
+         Metadata = GETCHAMP(MetaLg , MetaOff ,, Arg(1) )
+   End;
+   Else do;
+      Parse Arg Clef.1 . 65 73 CrDate 81 CrTime 89 UpDate             ,
+                                      97 UpTime 105 . 181 KeyToken
+      Metadata = ""
+   End;
+
+   KeyVer = substr(KeyToken,9,1)   /* Identify Key type */
+
+       /* - Interpret the Keytoken - */
+   Select
+      When KeyVer = '02'x then Parse value "RSA 1024" with Clef.4 Clef.5
+      When KeyVer = '09'x then Parse value "RSA 4096" with Clef.4 Clef.5
+      When KeyVer = '04'x then do;
+         Clef.4 = "RSA"
+         Clef.5 = c2d(substr(KeyToken,17,2))
+      End;
+      When KeyVer = '08'x then do;
+         Clef.4 = "RSA"
+         Clef.5 = c2d(substr(KeyToken,73,2))*8
+      End;
+      When KeyVer = '06'x then do;
+         Clef.4 = "RSA"
+         Clef.5 = c2d(substr(KeyToken,417,2))
+         Clef.7 = substr(KeyToken,373,16)   /* Get Mkvp */
+      End;
+      When KeyVer = '30'x then do;                     /* ME format */
+         Clef.4 = "RSA"
+         Clef.5 = c2d(substr(KeyToken,61,2))*8
+         Clef.7 = substr(KeyToken,113,16)   /* Get Mkvp */
+      End;
+      When KeyVer = '31'x then do;                    /* CRT format */
+         Clef.4 = "RSA"
+         Clef.4.1 = "ECC"
+         Clef.5 = c2d(substr(KeyToken,71,2))*8
+         Clef.7 = substr(KeyToken,125,8)    /* Get Mkvp */
+      End;
+      When KeyVer = '20'x then do;
+         Clef.3 = DEFCURV(substr(KeyToken,18,1))
+         Clef.4 = "ECC"
+         Clef.5 = c2d(substr(KeyToken,21,2))
+         Clef.7 = substr(KeyToken,25,8)     /* Get Mkvp */
+      End;
+      When KeyVer = '21'x then do;
+         Clef.3 = DEFCURV(substr(KeyToken,17,1))
+         Clef.4 = "ECC"
+         Clef.5 = c2d(substr(KeyToken,19,2))
+      End;
+      When KeyVer = '50'x then do;    /* Private Key */
+         Parse var KeyToken 18 Algo 21 59 LgKey 61
+         Clef.7 = substr(KeyToken,127,8)     /* Get Mkvp */
+         Clef.5 = "-"
+         Clef.4.1 = "QSAF"
+         Parse value DEFALGO(Algo) with Clef.4 Clef.3 .
+      End;
+      When KeyVer = '51'x then do;    /* Public Key */
+         Parse var KeyToken 14 Algo 17 19 LgKey 21
+         Clef.7 = "-"                        /* No Mkvp */
+         Clef.5 = "-"
+         Clef.4.1 = "QSAF"
+         Parse value DEFALGO(Algo) with Clef.4 Clef.3 .
+      End;
+      When KeyVer = '53'x then do;    /* AESKW Private */
+         Parse var KeyToken 13 Algo 16
+         Clef.7 = "-"                        /* No Mkvp */
+         Clef.5 = "-"
+         Clef.4.1 = "QSAF"
+         Parse value DEFALGO(Algo) with Clef.4 Clef.3 .
+      End;
+      Otherwise nop
+   End
+Return ANAMETAD(Metadata)
+/*                                                                */
+/*   DEFCURV : Identify the curv type                             */
+/*                                                                */
+DEFCURV : Procedure
+   Parse Arg CCurv .
+   Select
+      When CCurv = '00'x then Curv = "Prime"
+      When CCurv = '01'x then Curv = "Brainpool"
+      When CCurv = '02'x then Curv = "Edwards"
+      When CCurv = '03'x then Curv = "Koblitz"
+      Otherwise Curv = "-"
+   End
+Return Curv
+/*                                                                */
+/*   DEFALGO : Identify algorithm and parameters                  */
+/*                                                                */
+DEFALGO : Procedure
+   Parse Arg Algo 2 Apr 4
+   Select
+      When Algo = '01'x then Algo = "Dilithium_r2"
+      When Algo = '02'x then Algo = "Kyber_r2"
+      When Algo = '03'x then Algo = "Dilithium_r3"
+      When Algo = '81'x then Algo = "ECC"
+      When Algo = '82'x then Algo = "Dilithium_r2"
+      When Algo = '83'x then Algo = "Kyber_r2"
+      When Algo = '84'x then Algo = "Dilithium_r3"
+      Otherwise Algo = "-"
+   End
+   Select
+      When APr = '0605'x then APr = "6.5"
+      When APr = '0807'x then APr = "8.7"
+      When APr = '1024'x then APr = "1024"
+      Otherwise APr = "-"
+   End
+Return Algo Apr
+/*                                                          */
+/*   DATATKDS : Retrieve data from a TKDS record            */
+/*                                                          */
+DATATKDS : Procedure expose Kds. Clef. CrDate CrTime UpDate UpTime
+
+       /* - Parse the Record - */
+
+   If left(Kds.2,4) = "Kdsr" then do;
+      Parse Arg Clef.1 . 33 Clef.1.1 . 41 KeyAtt 42  89 CrDate        ,
+                         97 CrTime  105 UpDate 113 UpTime  121 MatLg  ,
+                        125 MatOff  129 MetaLg 133 MetaOff 137
+      KeyToken = GETCHAMP(MatLg , MatOff ,, Arg(1) )
+      Metadata = GETCHAMP(MetaLg , MetaOff ,, Arg(1) )
+   End;
+   Else do;
+      Parse Arg Clef.1 . 33 Clef.1.1 . 41 KeyAtt 42 81 CrDate         ,
+                  89 CrTime 97 UpDate 105 UpTime 113 . 189 KeyToken
+      Metadata = ""
+   End;
+
+   Parse var KeyToken Clef.3 5 TokVer 7 13 KeyTyp 17
+
+       /* - Interpret the Keytoken - */
+
+            /* Adjust the attribute */
+   Select
+      When KeyAtt = "T" then Clef.8 = "Clr"
+      When KeyAtt = "Y" then Clef.8 = "Sec"
+      Otherwise Clef.8 = "-"
+   End
+   If Clef.1.1 = "" then Clef.1.1 = "-"
+
+      /* Affects other characteristics */
+
+   Select
+      When Clef.3 = "TOKN"  then Parse var KeyToken 53 Clef.9 69
+      When Clef.3 = "CERT"  then do;
+         Clef.10 = "X/509"
+         Parse var KeyToken 71 LgLbl 73  117 OffLbl 121
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 168 , KeyToken)
+      End;
+      When Clef.3 = "PUBK"  then do;
+         If TokVer = "00" then Clef.10 = "RSA"
+         Parse var KeyToken 73 LgKey 77 1105 LgLbl 1107 1137 OffLbl 1141
+         Clef.5 = c2d(LgKey)
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 1184, KeyToken)
+      End;
+      When Clef.3 = "PRIV"  then do;
+         If TokVer = "00" then Clef.10 = "RSA"
+         Parse var KeyToken 73 LgKey 77 2953 LgLbl 2955 2985 OffLbl 2989
+         Clef.5 = c2d(LgKey)
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 3032, KeyToken)
+      End;
+      When Clef.3 = "SECK"  then do;
+         If KeyTyp = '0000001F'x then Clef.10 = "AES"
+         Parse var KeyToken 37 LgKey 39 679 LgLbl 681 705 OffLbl 709
+         Clef.5 = c2d(LgKey)*8
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 756, KeyToken)
+      End;
+      When Clef.3 = "DOMP"  then do;
+         Clef.10 = "DSA"
+         Parse var KeyToken 45 LgKey 49 1237 LgLbl 1239 1261 OffLbl 1265
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 1308, KeyToken)
+      End;
+      When Clef.3 = "DATA"  then do;
+         Parse var KeyToken 49 LgLbl 51 85 OffLbl 89
+         Clef.9 = GETCHAMP(LgLbl , OffLbl , 140, KeyToken)
+      End;
+      Otherwise Clef.3 = "-"
+   End
+
+Return ANAMETAD(Metadata)
+/*                                                                */
+/*  ANAMETAD : Store metadatas in stems Clef.13.xx  (cf. CSFKDMR) */
+/*                                                                */
+/*  X'0001'  Installation user data.                              */
+/*  X'0002'  Service that referenced the record.                  */
+/*  X'0003'  Record archive date.                                 */
+/*  X'0004'  Record recall date.                                  */
+/*  X'0005'  Key fingerprint.                                     */
+/*  X'0006'  Retained RSA key information.                        */
+/*  X'0008'  Last used class reference date                       */
+/*  X'8000'-X'FFFF' Installation metadata.                        */
+/*                                                                */
+ANAMETAD : Procedure expose Clef. Kds.
+   Metadata = arg(1)
+   If left(Kds.2,4) = "Kdsr" & Metadata <> "" then do;
+      Parse var Metadata 17 RefDate 25 StrDate 33 EndDate 41 Tags
+      If RefDate = copies('00'x,8) then Nop
+      Else Clef.11 = translate("7895601234",RefDate,"1234567890","-")
+      If EndDate = copies('00'x,8) then Nop
+      Else Clef.12 = translate("7895601234",EndDate,"1234567890","-")
+      Do I = 1 while Tags <> ""
+         Parse var Tags NoTag 3 LgTag 5 Tags
+         NoTag = c2d(NoTag)
+         LgTag = c2d(LgTag) - 4
+         If NoTag = 3 | NoTag = 4 then Clef.13.NoTag = ,
+             translate("7895691234",left(Tags,LgTag),"123456789","-")
+         Else Clef.13.NoTag = left(Tags,LgTag)
+         Tags = substr(Tags,LgTag+1)
+      End
+      Clef.13 = I-1
+   End;
+Return 0
+/*                                                                */
+/*   GETCHAMP : Retrieve a field in the provided area             */
+/*                                                                */
+GETCHAMP : Procedure
+   Parse Arg Lg , Offset , Offbis . , Zone
+   If Offbis = "" then Start = c2d(Offset) + 1
+   Else Start = Offbis + c2d(Offset) + 1
+   Champ = Substr(Zone,Start,c2d(Lg))
+   If Champ = "" then Champ = "-"
+Return Champ
+/*----------------------------------------------------------------*/
+/*   VALIDSN : Verify that Dataset exists and                     */
+/*                            returns Retcod Dsname Dsorg Lrecl   */
+/*                                                                */
+/*        >> Syntax - VALIDSN("DD="DDname) or VALIDSN(Dsname) <<  */
+/*                                                                */
+/*             Rc = 0  -> Ok          = 12  -> DD not found       */
+/*                = 4  -> Vsam        = 24  -> File not found     */
+/*                = 6  -> Instream    = 27  -> Error on file      */
+/*----------------------------------------------------------------*/
+VALIDSN : Procedure
+   Arg Dsname .
+   If left(Dsname,3) = "DD=" then Rc = Listdsi(substr(Dsname,4) "FILE")
+   Else Rc = Listdsi("'"Dsname"'")
+   Select
+      When Rc = 0                   then nop
+      When Rc = 4  & SysReason = 12 then   ,     /* VSAM File      */
+                              SysLrecl = GETLRECL(SysDsname)
+      When Rc = 16 & SysReason =  5 then Rc = 24 /* File not found */
+      When Rc = 16 & SysReason =  2 then Rc = 12 /* DD not found   */
+      When Rc = 16 & SysReason =  3 then Rc = 6  /* File instream  */
+      Otherwise Rc = 27
+   End
+   If Rc > 4 then Return Rc
+Return Rc SysDsname SysDsorg SysLrecl
+/*----------------------------------------------------------------*/
+/*   GETLRECL : Retrieve max Lrecl from a VSAM file               */
+/*----------------------------------------------------------------*/
+GETLRECL : Procedure
+   Arg Dsn .
+   Rc = outtrap(Listc.)
+   "LISTCAT ENT('"Dsn"') ALL"
+   Rc = outtrap('OFF')
+   Sw = 0
+   MaxLrecl = 0
+   Do I = 1 to Listc.0;
+      Select
+         When word(Listc.I,1) = "DATA"  then Sw = 1
+         When word(Listc.I,1) = "INDEX" then Sw = 0
+         When Sw & pos("MAXLRECL",Listc.I) > 0 then do;
+            Line = translate(Listc.I," ","-")
+            Parse var Line "MAXLRECL" MaxLrecl .
+            Leave
+         End;
+         Otherwise nop
+      End
+   End
+Return MaxLrecl
+/* ----------------------- E d i t i o n ------------------------- */
+/*                                                                 */
+/*  EDITETE : Building header                                      */
+/*                                                                 */
+EDITETE : Procedure expose Kds. Mkvp. Out. DsnKDS Vers EdForm
+
+   Out.1 = CREOUT(100 Vers EdForm)
+
+      /* - - Build xKDS name - - */
+   Out.3 = CREOUT(101 left(Kds.1,1) "K D S")    /* Title */
+   Out.4 = CREOUT(102 Kds.3.1 Kds.3.2 Kds.3.3 Kds.3.4)
+   Out.6 = CREOUT(103 DsnKDS)
+   Out.7 = CREOUT(104 Kds.2)
+
+      /* - - Get informations about MasterKeys - - */
+   Select
+      When Kds.1 = "CKDS" then do;
+         Out.8 = CREOUT(105 "DES" Mkvp.1.1 "AES" Mkvp.2.1)
+         Select
+            When EdForm = "Short"  then ,
+                  Parse value "211 212 8" with  LgnSep LgnTit NbOut
+            When EdForm = "Long"   then ,
+                  Parse value "311 312 8" with  LgnSep LgnTit NbOut
+            Otherwise                   ,
+                  Parse value "111 112 8" with  LgnSep LgnTit NbOut
+         End
+      End;
+      When Kds.1 = "PKDS" then do;
+         Out.8 = CREOUT(105 "RSA" Mkvp.3.1 "ECC" Mkvp.4.1)
+         Out.9 = CREOUT(106 Mkvp.3.2)
+         Select
+            When EdForm = "Short"  then ,
+                  Parse value "214 215 9" with  LgnSep LgnTit NbOut
+            When EdForm = "Long"   then ,
+                  Parse value "314 315 9" with  LgnSep LgnTit NbOut
+            Otherwise                   ,
+                  Parse value "114 115 9" with  LgnSep LgnTit NbOut
+         End
+      End;
+      Otherwise do;
+         Out.8 = CREOUT(105 "P11" Mkvp.5.1 "RCS" Mkvp.6.1)
+         Out.9 = CREOUT(106 Mkvp.5.2)
+         Select
+            When EdForm = "Short"  then ,
+                  Parse value "217 218 9" with  LgnSep LgnTit NbOut
+            When EdForm = "Long"   then ,
+                  Parse value "317 318 9" with  LgnSep LgnTit NbOut
+            Otherwise                   ,
+                  Parse value "117 118 9" with  LgnSep LgnTit NbOut
+         End
+      End;
+   End
+      /* Table header */
+   NbOut = Nbout + 2
+   Out.NbOut = CREOUT(LgnSep)
+   NbOut = Nbout + 1
+   Out.NbOut = CREOUT(LgnTit)
+   NbOut = Nbout + 1
+   Out.NbOut = CREOUT(LgnSep)
+
+Return NbOut
+/*                                         */
+/*  EDITLINE : Build a line                */
+/*                                         */
+EDITLINE : Procedure expose Clef. Kds. Out. EdForm
+
+      /* Writes one line of the table */
+   NbOut = Out.0 + 1
+   If Clef.7 <> "-" then KeyMkvp = c2X(Clef.7)
+   Else KeyMkvp = Clef.7
+   Select
+      When Kds.1 = "CKDS" then do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(213)
+            When EdForm = "Long"  then Out.NbOut = CREOUT(313 KeyMkvp)
+            Otherwise Out.NbOut = CREOUT(113)
+         End
+      End;
+      When Kds.1 = "PKDS" then do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(216)
+            When EdForm = "Long"  then do;
+               Out.NbOut = CREOUT(316 KeyMkvp)
+               If length(KeyMkvp) > 16 then do
+                  NbOut = NbOut + 1
+                  Out.NbOut = CREOUT(416 KeyMkvp) /* 2eme ligne MKVP */
+               End
+            End;
+            Otherwise Out.NbOut = CREOUT(116)
+         End
+      End;
+      Otherwise do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(219)
+            When EdForm = "Long"  then Out.NbOut = CREOUT(319)
+            Otherwise Out.NbOut = CREOUT(119)
+         End
+      End;
+   End
+Return NbOut
+/*                                           */
+/*  EDITFIN : Write the result in OUT file   */
+/*                                           */
+EDITFIN : Procedure expose Kds. Out. EdForm DsnOut
+
+      /* Write the bottom of the table */
+   NbOut = Out.0 + 1
+   Select
+      When Kds.1 = "CKDS" then do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(211)
+            When EdForm = "Long"  then Out.NbOut = CREOUT(311)
+            Otherwise Out.NbOut = CREOUT(111)
+         End
+      End;
+      When Kds.1 = "PKDS" then do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(214)
+            When EdForm = "Long"  then Out.NbOut = CREOUT(314)
+            Otherwise Out.NbOut = CREOUT(114)
+         End
+      End;
+      Otherwise do;
+         Select
+            When EdForm = "Short" then Out.NbOut = CREOUT(217)
+            When EdForm = "Long"  then Out.NbOut = CREOUT(317)
+            Otherwise Out.NbOut = CREOUT(117)
+         End
+      End;
+   End
+   NbOut = NbOut + 1
+   Out.NbOut = CREOUT(110 arg(1))
+   If DsnOut = "" then do;
+      Do I = 1 to NbOut
+         Say Out.I
+      End
+   End;
+   Else 'EXECIO' NbOut 'DISKW OUT (FINIS STEM OUT.'
+Return 0
+/*                                                */
+/*   CREOUT : Build the lines of the OUT file     */
+/*                                                */
+CREOUT : Procedure expose Kds. Clef.
+   Parse Arg Cr P1 P2 P3 P4 P5 . , Retc .
+
+   Select
+      When Cr = 100 then Txt = date() right("* *",12) "K d s L i s t" ,
+                               " ("P1")" left("* *",12) time()        ,
+                               right("("P2")",10)
+      When Cr = 101 then Txt = "    - Creation -"                     ,
+                               center("* *" P1 P2 P3 P4 "* *",35)     ,
+                               "- Last update -"
+      When Cr = 102 then Txt = left(P1"  "P2,50) P3 P4
+      When Cr = 103 then Txt = center(">" P1 "<",72)
+      When Cr = 104 then Txt = "      Format :" P1
+      When Cr = 105 then Txt = "        Mkvp :" P1"="left(P2,16)      ,
+                                                         "-" P3"="P4
+      When Cr = 106 then Txt = copies(" ",18) P1
+      When Cr = 110 then Txt = right(P1,6) "Keys read"
+
+                    /* CKDS */
+        /* EpForm : Short */
+      When Cr = 211 then Txt = copies("-",64)"+-----+----+---"
+      When Cr = 212 then Txt = center("Label",64)"|Type |Algo|Mk?"
+      When Cr = 213 then Txt = left(Clef.1,64)"|"left(Clef.3,5)"|" || ,
+                               left(Clef.4,4)"|"left(Clef.6,3)
+        /* EpForm : Medium */
+      When Cr = 111 then Txt = "+"copies("-",66)"+----------+"     || ,
+                        "------+------+------+------------+----------+"
+      When Cr = 112 then Txt = "|" left(" Label",64) "|   Type   |"   ,
+                         "Algo | Size | Mk?  |  CreDate   | CreTime  |"
+      When Cr = 113 then Txt = "|" left(Clef.1,64) "|" left(Clef.3,8) ,
+                          "|" left(Clef.4,4) "|" right(Clef.5,4)  "|" ,
+                              left(Clef.6,4) "|"                      ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|"
+        /* EpForm : Long */
+      When Cr = 311 then Txt = "+"copies("-",66)"+----------+"     || ,
+                         "------+------+------------------+-----+" || ,
+                         "------------+----------+------------+"   || ,
+                         "------------+------------+--------------+"
+      When Cr = 312 then Txt = "|" left(" Label",64) "|   Type   |"   ,
+                         "Algo | Size |     Mkvp         | Mk? |"     ,
+                         "  CreDate  | CreTime  | Arch Date  |"       ,
+                         " End Valid |  Last Use  | Last Service |"
+      When Cr = 313 then Txt = "|" left(Clef.1,64) "|" left(Clef.3,8) ,
+                          "|" left(Clef.4,4) "|" right(Clef.5,4)  "|" ,
+                              left(P1,16)    "|" left(Clef.6,3)   "|" ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|" ,
+                           left(Clef.13.3,10) "|"                     ,
+                           left(Clef.12,10)  "|" left(Clef.11,10) "|" ,
+                                               left(Clef.13.2,12) "|"
+
+                    /* PKDS */
+        /* EpForm : Short */
+      When Cr = 214 then Txt = copies("-",64)"+----+----+---"
+      When Cr = 215 then Txt = left(" Label",64)"|Algo|Size|Mk?"
+      When Cr = 216 then Txt = left(Clef.1,64)"|"left(Clef.4,4)"|" || ,
+                               left(Clef.5,4)"|"left(Clef.6,3)
+        /* EpForm : Medium */
+      When Cr = 114 then Txt = "+"copies("-",66)"+------+"         || ,
+                               "-----------+------+-----+"         || ,
+                               "------------+----------+"
+      When Cr = 115 then Txt = "|" left(" Label",64) "| Algo |"       ,
+                               "Type      | Size | Mk? |"             ,
+                               " CreDate   | CreTime  |"
+      When Cr = 116 then Txt = "|" left(Clef.1,64) "|" left(Clef.4,4) ,
+                          "|" left(Clef.3,9) "|" left(Clef.5,4)       ,
+                                             "|" left(Clef.6,3)  "|"  ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|"
+        /* EpForm : Long */
+      When Cr = 314 then Txt = "+"copies("-",66)"+--------------+" || ,
+                         "-----------+------+------------------+"  || ,
+                         "-----+------------+----------+"          || ,
+                         "------------+------------+--------------+"
+      When Cr = 315 then Txt = "|" left(" Label",64) "| Algorithm   " ,
+                            "| Type      | Size |     Mkvp         |" ,
+                              "Mk? |  CreDate   | CreTime  |"         ,
+                         "End Valid  |  Last Use  | Last Service |"
+      When Cr = 316 then Txt = "|" left(Clef.1,64) "|" left(Clef.4,12),
+                          "|" left(Clef.3,9) "|"  left(Clef.5,4)  "|" ,
+                              left(P1,16)    "|"  left(Clef.6,3)  "|" ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|" ,
+                           left(Clef.12,10)  "|" left(Clef.11,10) "|" ,
+                                               left(Clef.13.2,12) "|"
+      When Cr = 416 then Txt = "|"copies(" ",66)"|              |" || ,
+                            "           |      |" right(P1,16) "|" || ,
+                                  "     |            |          |" || ,
+                         "            |            |              |"
+
+                    /* TKDS */
+        /* EpForm : Short */
+      When Cr = 217 then Txt = copies("-",32)"+--------+---+"      || ,
+                              "-----+-----+----+----------------"
+      When Cr = 218 then Txt = left(" Label",32)"| SeqNum |Att|"   || ,
+                               "Token|Type |Size| Relate"
+      When Cr = 219 then Txt = left(Clef.1,32)"|"                  || ,
+                              left(Clef.1.1,8)"|"left(Clef.8,3)"|" || ,
+                              left(Clef.3,5)"|"left(Clef.10,5)"|"  || ,
+                              left(Clef.5,4)"|"left(Clef.9,16)
+        /* EpForm : Medium */
+      When Cr = 117 then Txt = "+"copies("-",34)"+----------+"     || ,
+                               "-----+-------+-------+------+"     || ,
+                               "-----------------------------"     || ,
+                               "-+------------+----------+"
+      When Cr = 118 then Txt = "|" left(" Label",32) "|  SeqNum  |"   ,
+                               "Att | Token | Type  | Size |"         ,
+                               " Relate                      |"       ,
+                               " CreDate   | CreTime  |"
+      When Cr = 119 then Txt = "|" left(Clef.1,32) "|"                ,
+                              left(Clef.1.1,8) "|" left(Clef.8,3) "|" ,
+                              left(Clef.3,5) "|"  left(Clef.10,5) "|" ,
+                              left(Clef.5,4) "|"  left(Clef.9,28) "|" ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|"
+        /* EpForm : Long */
+      When Cr = 317 then Txt = "+"copies("-",34)"+----------+"     || ,
+                               "-----+-------+-------+------+"     || ,
+                               "---------------------------------" || ,
+                               "-+------------+----------+"        || ,
+                         "------------+------------+--------------+"
+      When Cr = 318 then Txt = "|" left(" Label",32) "|  SeqNum  |"   ,
+                               "Att | Token | Type  | Size |"         ,
+                               " Relate                          |"   ,
+                               " CreDate   | CreTime  | End Valid  |" ,
+                               " Last Use  | Last Service |"
+      When Cr = 319 then Txt = "|" left(Clef.1,32) "|"                ,
+                              left(Clef.1.1,8) "|" left(Clef.8,3) "|" ,
+                              left(Clef.3,5) "|"  left(Clef.10,5) "|" ,
+                              left(Clef.5,4) "|"  left(Clef.9,32) "|" ,
+                           left(Clef.2.1,10) "|" left(Clef.2.2,8) "|" ,
+                           left(Clef.12,10)  "|" left(Clef.11,10) "|" ,
+                                               left(Clef.13.2,12) "|"
+      Otherwise Parse Arg . Txt
+   End
+Return Txt
+/*                               */
+/*   ERROR : Managing messages   */
+/*                               */
+ERROR : Procedure
+   Parse Arg Cr P1 P2 P3 P4 . 1 . L1 L2 L3 L4 . , Retc .
+   Upper P1 P2 P3 P4
+
+   Select
+      When Cr =   4 then Txt = "KDSLIST does not support VSAM files"  ,
+                               "as ouput. ("P1 "=" P2")"
+      When Cr =   6 then Txt = "DDname" P1 "instream not supported"
+      When Cr =  12 then Txt = "DDname" P1 "not allocated"
+      When Cr =  14 then Txt = "Lrecl OUT too short :" P1
+      When Cr =  24 then Txt = "DDname" P1 ": File doesn't exist"
+      When Cr =  27 then Txt = "DDname" P1 ": File unusable"
+      When Cr =  29 then Txt = "I/O error reading KDS file - Rc="P1
+      When Cr =  30 then Txt = "* Process aborted *"
+      When Cr =  31 then Txt = "End of processing ("P1 "keys)"
+      When Cr = 100 then Txt = date() "* * K d s L i s t  ("P1") * *" ,
+                               time()
+      Otherwise Parse Arg . Txt
+   End
+   Say Txt
+   If Retc = "" then Rc = Cr
+   Else Rc = Retc
+
+Return Rc

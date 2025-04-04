@@ -1,0 +1,12 @@
+*             - - - Contents - - -               SafCheck version 3.3
+
+COMPASM  = JCL to compile SAFCHECK
+SAFCHECK = Sample Rexx to use SAFCHECK
+SAFCHKBT = Sample JCL to use SAFCHECK
+SAFCHK33 = Sources file of SAFCHECK version 3.3
+SAFCKDOC = Documentation in binary zip format
+
+ To get the documentation you must retrieve the member SAFCKDOC on
+ windows with IND$FILE or FTP in BINARY mode (mandatory) and then
+ rename it to AnyThingYouWant.zip
+ You will get the word and pdf documentation
